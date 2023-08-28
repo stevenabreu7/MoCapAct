@@ -259,6 +259,9 @@ class ExpertDataset(Dataset):
         self._q_value_offset = self._compute_offset(values + advantages)
 
     def _create_offsets(self):
+        # # debug
+        # print('[warning] called ExpertDataset._create_offsets (not RNN!)')
+        # input()
         self._total_len = 0
         self._dset_indices = []
         self._logical_indices, self._dset_groups = [[] for _ in self._hdf5_fnames], [[] for _ in self._hdf5_fnames]
@@ -379,6 +382,205 @@ class ExpertDataset(Dataset):
                 energy = adv - self._advantage_offset
             else:
                 val = val_dset[start_idx:end_idx] if self.is_sequential else val_dset[start_idx]
+                energy = val + adv - self._q_value_offset
+            weight = np.exp(energy / self._temperature)
+
+        weight = np.array(np.minimum(weight, self._max_weight), dtype=np.float32)
+
+        return obs, act, weight
+
+
+class ExpertDatasetRNN(ExpertDataset):
+    def __init__(
+        self,
+        hdf5_fnames: Sequence[Text],
+        observables: Union[Sequence[Text], Dict[Text, Sequence[Text]]],
+        metrics_path: Text,
+        clip_ids: Optional[Sequence[Text]] = None,
+        max_clip_len: int = 210,
+        min_seq_steps: int = 1,
+        max_seq_steps: int = 1,
+        normalize_obs: bool = False,
+        normalize_act: bool = False,
+        return_mean_act: bool = True,
+        clip_len_upsampling: bool = False,
+        n_start_rollouts: int = -1,
+        n_rsi_rollouts: int = -1,
+        concat_observables: bool = True,
+        clip_weighted: bool = False,
+        advantage_weights: bool = True,
+        temperature: Optional[float] = None,
+        max_weight: float = float('inf'),
+        keep_hdf5s_open: bool = False
+    ):
+        assert n_start_rollouts == -1, 'n_start_rollouts must be -1'
+        assert n_rsi_rollouts == -1, 'n_rsi_rollouts must be -1'
+        assert not clip_len_upsampling, 'clip_len_upsampling must be False'
+
+        super().__init__(
+            hdf5_fnames, observables, metrics_path, clip_ids, max_clip_len,
+            min_seq_steps, max_seq_steps, normalize_obs, normalize_act,
+            return_mean_act, clip_len_upsampling, n_start_rollouts,
+            n_rsi_rollouts, concat_observables, clip_weighted,
+            advantage_weights, temperature, max_weight, keep_hdf5s_open
+        )
+
+    def _create_offsets(self):
+        """
+        Same as super._create_offsets, but using episode indices instead
+        of step indices.
+        """
+        print('called _create_offsets() in ExpertDatasetRNN')
+
+        self._n_episodes = 0
+
+        # indices are timestep indices across episodes and clips
+        # total_len: total number of steps in the dataset
+        # dset_indices: indices of the HDF5 files
+        # logical_indices: indices of the first step of each episode
+        # dset_groups: name of the clip and episode (index into hdf5 dset)
+        self._total_len = 0
+        self._dset_indices = []
+        self._logical_indices = [[] for _ in self._hdf5_fnames]
+        self._dset_groups = [[] for _ in self._hdf5_fnames]
+        self._early_terminations = [[] for _ in self._hdf5_fnames]
+        self._snippet_len_weights = [[] for _ in self._hdf5_fnames]
+
+        iterator = zip(
+            self._hdf5_fnames,
+            self._clip_snippets,
+            self._logical_indices,
+            self._dset_groups,
+            self._early_terminations,
+            self._snippet_len_weights
+        )
+        for (
+            fname, clip_snippets, logical_indices, dset_groups,
+            early_terminations, snippet_len_weights
+        ) in iterator:
+            with h5py.File(fname, 'r') as dset:
+                # self._dset_indices.append(self._total_len)
+                self._dset_indices.append(self._n_episodes)
+                n_start_rollouts = dset['n_start_rollouts'][...]
+                n_rsi_rollouts = dset['n_rsi_rollouts'][...]
+                for snippet in clip_snippets:
+                    len_iterator = itertools.chain(
+                        dset[f"{snippet}/start_metrics/episode_lengths"]
+                            [:n_start_rollouts],
+                        dset[f"{snippet}/rsi_metrics/episode_lengths"]
+                            [:n_rsi_rollouts]
+                    )
+                    for i, ep_len in enumerate(len_iterator):
+                        episode = i
+                        # logical_indices.append(self._total_len)
+                        logical_indices.append(self._n_episodes)
+                        dset_groups.append(f"{snippet}/{episode}")
+                        snippet_len_weights.append(1)
+                        early_terminations.append(
+                            dset[f"{snippet}/early_termination"][episode]
+                        )
+                        if ep_len < self._min_seq_steps:
+                            continue
+                        self._n_episodes += 1
+                        self._total_len += (ep_len - (self._min_seq_steps-1))
+        # # debug
+        # print(f'Number of episodes: {self._n_episodes}')
+        # print(f"Total number of steps: {self._total_len}")
+        # print(f"dset_indices: {self._dset_indices}")
+        # print(f"logical_indices: {self._logical_indices}")
+
+    def __len__(self):
+        """
+        using episode indices instead of step indices
+        """
+        return self._n_episodes
+
+    def __getitem__(self, ep_idx):
+        """
+        using episode indices instead of step indices
+        """
+        if ep_idx >= self._n_episodes:
+            raise IndexError("Dataset index out of range")
+
+        dset_idx = bisect.bisect_right(self._dset_indices, ep_idx)-1
+
+        if self._keep_hdf5s_open:
+            return self._getitem(self._dsets[dset_idx], ep_idx)
+
+        with h5py.File(self._hdf5_fnames[dset_idx], 'r') as dset:
+            return self._getitem(dset, ep_idx)
+
+    def _getitem(self, dset, idx):
+        """
+        using episode indices instead of step indices
+        """
+        dset_idx = bisect.bisect_right(self._dset_indices, idx)-1
+        clip_idx = bisect.bisect_right(self._logical_indices[dset_idx], idx)-1
+        act_name = "mean_actions" if self._return_mean_act else "actions"
+
+        proprio_dset = dset[f"{self._dset_groups[dset_idx][clip_idx]}/observations/proprioceptive"]
+        act_dset = dset[f"{self._dset_groups[dset_idx][clip_idx]}/{act_name}"]
+        val_dset = dset[f"{self._dset_groups[dset_idx][clip_idx]}/values"]
+        adv_dset = dset[f"{self._dset_groups[dset_idx][clip_idx]}/advantages"]
+        snippet_len_weight = self._snippet_len_weights[dset_idx][clip_idx]
+
+        assert snippet_len_weight == 1
+
+        start_idx = int((idx - self._logical_indices[dset_idx][clip_idx]))
+        end_idx = act_dset.shape[0]+1
+
+        # debug
+        # # print('get item:', dset_idx, clip_idx, idx)
+        # # print('start, end:', start_idx, end_idx)
+
+        # always take a sequence of observations
+        act = act_dset[start_idx:end_idx]
+        if act_dset.shape[0] == proprio_dset.shape[0] - 1:
+            # print('[warning] using obs[:-1] to match act')
+            all_obs = proprio_dset[start_idx:end_idx-1]
+        elif act_dset.shape[0] == proprio_dset.shape[0]:
+            all_obs = proprio_dset[start_idx:end_idx]
+        else:
+            raise ValueError('act and obs have different lengths')
+
+        if self._normalize_obs:
+            all_obs = (all_obs - self.proprio_mean) / self.proprio_std
+        if self._normalize_act:
+            act = (act - self.act_mean) / self.act_std
+
+        # Extract observation
+        if isinstance(self._observables, dict):
+            obs = {
+                k: self._extract_observations(all_obs, observable_keys)
+                for k, observable_keys in self._observables.items()
+            }
+            if self._concat_observables:
+                obs = {
+                    k: np.concatenate(list(v.values()), axis=-1)
+                    for k, v in obs.items()
+                }
+        else:
+            obs = self._extract_observations(all_obs, self._observables)
+            if self._concat_observables:
+                obs = np.concatenate(list(obs.values()), axis=-1)
+
+        if self._temperature is None or self._temperature == float('inf'):
+            # always sequential
+            weight = np.ones(end_idx-start_idx)
+        elif self._clip_weighted:
+            key = self._dset_groups[dset_idx][clip_idx].split('/')[0]
+            ret = self._snippet_returns[key]
+            weight = np.exp((ret - self._return_offset) / self._temperature)
+            # always sequential
+            weight = weight * np.ones(end_idx-start_idx)
+        else:  # state-action weight
+            # always sequential
+            adv = adv_dset[start_idx:end_idx]
+            if self._advantage_weights:
+                energy = adv - self._advantage_offset
+            else:
+                # always sequential
+                val = val_dset[start_idx:end_idx]
                 energy = val + adv - self._q_value_offset
             weight = np.exp(energy / self._temperature)
 
