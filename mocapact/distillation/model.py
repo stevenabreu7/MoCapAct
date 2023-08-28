@@ -223,6 +223,157 @@ class BasePolicy(policies.BasePolicy, pl.LightningModule):
         return actions, state
 
 
+class SimpleRNN(nn.Module):
+    def __init__(self, input_size, hidden_size, output_size, afn, squash, bias):
+        super().__init__()
+        self.rnn = nn.RNNCell(input_size, hidden_size, bias=bias,
+                              nonlinearity=afn)
+        self.linear = nn.Linear(hidden_size, output_size, bias=bias)
+        self.squash = squash
+        if self.squash:
+            self.nonlinearity = nn.Tanh()
+
+    def forward(self, x):
+        # x: (B, T, input_size)
+        output = torch.zeros(x.size(0), x.size(1), self.linear.out_features)
+        hx = None
+        for t in range(x.size(1)):
+            hx = self.rnn(input=x[:, t, :], hx=hx)
+            output_t = self.linear(hx)
+            if self.squash:
+                output_t = self.nonlinearity(output_t)
+            output[:, t, :] = output_t
+        return output
+
+
+class RnnPolicy(BasePolicy):
+    """
+    A recurrent policy.
+    """
+    def __init__(
+        self,
+        observation_space: gym.spaces.Space,
+        action_space: gym.spaces.Space,
+        observables: Union[Sequence[Text], Tuple[Sequence[Text]]],
+        ref_steps: Sequence[int],
+        learning_rate: float,
+        n_layers: int = 1,
+        layer_size: int = 1024,
+        activation_fn: Text = 'torch.nn.Tanh',
+        squash_output: bool = False,
+        std_dev: float = 0.1,
+        features_extractor_class: Type[torch_layers.BaseFeaturesExtractor] = features_extractor.CmuHumanoidFeaturesExtractor,
+        features_extractor_kwargs: Optional[Dict[str, Any]] = None,
+        optimizer_class: Type[torch.optim.Optimizer] = torch.optim.Adam,
+        optimizer_kwargs: Optional[Dict[str, Any]] = None,
+        optimizer_scheduler_class: Type[torch.optim.lr_scheduler._LRScheduler] = None,
+        optimizer_scheduler_kwargs: Optional[Dict[str, Any]] = None
+    ):
+        super().__init__(
+            observation_space, action_space, observables,
+            ref_steps, learning_rate, activation_fn, squash_output, std_dev,
+            features_extractor_class, features_extractor_kwargs,
+            optimizer_class, optimizer_kwargs, optimizer_scheduler_class,
+            optimizer_scheduler_kwargs
+        )
+
+        # setup the recurrent policy
+        self.n_layers = n_layers
+        self.layer_size = layer_size
+
+        assert self.n_layers == 1, 'only 1 layer supported for now'
+
+        # # debug
+        # print('n layers', self.n_layers)
+        # print('layer size', self.layer_size)
+        # print('features dim', self.features_dim)
+        # print('action space', self.action_space.shape)
+
+        rnn_act = 'tanh' if activation_fn == 'torch.nn.Tanh' else 'relu'
+
+        self.rnn = SimpleRNN(self.features_dim, self.layer_size, self.
+                             action_space.shape[0], rnn_act, squash_output,
+                             bias=True)
+
+    def _get_constructor_parameters(self) -> Dict[str, Any]:
+        data = super()._get_constructor_parameters()
+        data.update(
+            dict(
+                n_layers=self.n_layers,
+                layer_size=self.layer_size
+            )
+        )
+        return data
+
+    def initial_state(self, batch_size=1, deterministic=False):
+        # don't think this is ever used..
+        print('[warning] initialized state in rnn policy')
+        return np.zeros(batch_size, dtype=np.float32)
+
+    def forward(self, features: torch.Tensor, blens) -> Tuple[torch.Tensor]:
+        # features: (B, T, features_dim)
+        # # self.rnn_hx = self.rnn(features, self.rnn_hx)
+        # rnn_hx = self.rnn(features, None)
+        # # output = self.linear(self.rnn_hx)
+        # output = self.linear(rnn_hx)
+        # if self.squash_output:
+        #     output = self.nonlinearity(output)
+        output = self.rnn(features)
+        # print('forward.output:', output.shape, output.get_device())
+
+        # flatten B and T dimensions
+        output = torch.cat([
+            output[i, :blens[i], :] for i in range(output.shape[0])
+        ], dim=0)
+        # output = output.flatten(start_dim=0, end_dim=1)
+        # print('forward.output:', output.shape, output.get_device())
+
+        return Independent(Normal(output, self.std_dev), -1),
+
+    def training_step(self, batch, batch_idx):
+        # features: (B, T, F)
+        # act: (B, T, A)
+        # weights: (B, T)
+        obs, act, weights, _, blens, _ = batch
+        features = self.extract_features(obs, self.features_extractor)
+
+        # act_gaussian = Ind(Normal(output, std), -1)
+        # where output: (B, T, 0)
+        act_gaussian, = self(features, blens)
+
+        # need to flatten B and T dimensions for loss calculation
+        # also masked out the padded values
+        act = torch.cat([
+            act[i, :blens[i], :] for i in range(act.shape[0])
+        ], dim=0)
+        weights = torch.cat([
+            weights[i, :blens[i]] for i in range(weights.shape[0])
+        ], dim=0)
+        features = torch.cat([
+            features[i, :blens[i], :] for i in range(features.shape[0])
+        ], dim=0)
+
+        loss = -weights @ act_gaussian.log_prob(act)
+        mse = F.mse_loss(act, act_gaussian.mean)
+        self.log("mse", mse, on_step=True, on_epoch=False, prog_bar=True,
+                 logger=True)
+        self.log("train_loss", loss, on_step=True, on_epoch=False,
+                 prog_bar=True, logger=True)
+        return loss
+
+    def _predict(
+        self,
+        observation: torch.Tensor,
+        state: torch.Tensor,
+        deterministic: bool = False
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        # TODO: implement (flatten correctly)
+        raise NotImplementedError('predict not implemented for rnn policy')
+        features = self.extract_features(observation, self.features_extractor)
+        act_gaussian, = self(features)
+        return (act_gaussian.mean, state)
+
+
 class MlpPolicy(BasePolicy):
     """
     The simple MLP.

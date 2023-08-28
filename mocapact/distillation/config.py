@@ -9,6 +9,16 @@ def prepend_model(name):
 
 def get_config(config_string):
     configs = {
+        'rnn_reference': ConfigDict({
+            'constructor': prepend_model('RnnPolicy'),
+            'config': ConfigDict(dict(
+                n_layers=1,
+                layer_size=1024,
+                activation_fn='torch.nn.Tanh',
+                squash_output=True,
+                observables=observables.HIGH_LEVEL_OBSERVABLES
+                ))
+            }),
         'mlp_time_index': ConfigDict({
             'constructor': prepend_model('MlpPolicy'),
             'config': ConfigDict(dict(
