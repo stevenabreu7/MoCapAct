@@ -306,11 +306,11 @@ class RnnPolicy(BasePolicy):
         return data
 
     def initial_state(self, batch_size=1, deterministic=False):
-        # don't think this is ever used..
-        print('[warning] initialized state in rnn policy')
-        return np.zeros(batch_size, dtype=np.float32)
+        """Used for outputting initial action in environment."""
+        action_shape = (batch_size, self.action_space.shape[0])
+        return np.zeros(action_shape, dtype=np.float32)
 
-    def forward(self, features: torch.Tensor, blens) -> Tuple[torch.Tensor]:
+    def forward(self, features: torch.Tensor, lens=None):
         # features: (B, T, features_dim)
         # # self.rnn_hx = self.rnn(features, self.rnn_hx)
         # rnn_hx = self.rnn(features, None)
@@ -318,12 +318,18 @@ class RnnPolicy(BasePolicy):
         # output = self.linear(rnn_hx)
         # if self.squash_output:
         #     output = self.nonlinearity(output)
+        if len(features.shape) == 2:
+            features = features.unsqueeze(0)
         output = self.rnn(features)
         # print('forward.output:', output.shape, output.get_device())
 
+        T = features.shape[1]
+        if lens is None:
+            lens = [T for _ in range(output.shape[0])]
+
         # flatten B and T dimensions
         output = torch.cat([
-            output[i, :blens[i], :] for i in range(output.shape[0])
+            output[i, :lens[i], :] for i in range(output.shape[0])
         ], dim=0)
         # output = output.flatten(start_dim=0, end_dim=1)
         # print('forward.output:', output.shape, output.get_device())
@@ -367,8 +373,6 @@ class RnnPolicy(BasePolicy):
         state: torch.Tensor,
         deterministic: bool = False
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        # TODO: implement (flatten correctly)
-        raise NotImplementedError('predict not implemented for rnn policy')
         features = self.extract_features(observation, self.features_extractor)
         act_gaussian, = self(features)
         return (act_gaussian.mean, state)
