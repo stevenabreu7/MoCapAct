@@ -43,17 +43,31 @@ flags.mark_flag_as_required("policy_path")
 flags.mark_flag_as_required("clip_snippets")
 logging.set_verbosity(logging.WARNING)
 
+
+def load_policy():
+    model_constructor_path = osp.join(
+        osp.dirname(osp.dirname(osp.dirname(FLAGS.policy_path))),
+        'model_constructor.txt'
+    )
+    is_in_eval_dir = osp.exists(model_constructor_path)
+    if not is_in_eval_dir:
+        model_constructor_path = osp.join(
+            osp.dirname(osp.dirname(FLAGS.policy_path)),
+            'model_constructor.txt'
+        )
+
+    with open(model_constructor_path, 'r') as f:
+        model_cls = utils.str_to_callable(f.readline())
+
+    return model_cls.load_from_checkpoint(FLAGS.policy_path,
+                                          map_location=FLAGS.device)
+
+
 def main(_):
     clips = utils.make_clip_collection(FLAGS.clip_snippets)
 
     # set up model
-    is_in_eval_dir = osp.exists(osp.join(osp.dirname(osp.dirname(osp.dirname(FLAGS.policy_path))), 'model_constructor.txt'))
-    model_constructor_path = (osp.join(osp.dirname(osp.dirname(osp.dirname(FLAGS.policy_path))), 'model_constructor.txt')
-                              if is_in_eval_dir
-                              else osp.join(osp.dirname(osp.dirname(FLAGS.policy_path)), 'model_constructor.txt'))
-    with open(model_constructor_path, 'r') as f:
-        model_cls = utils.str_to_callable(f.readline())
-    policy = model_cls.load_from_checkpoint(FLAGS.policy_path, map_location=FLAGS.device)
+    policy = load_policy()
 
     # set up environment
     task_kwargs = dict(
@@ -82,7 +96,9 @@ def main(_):
         )
 
         record_video = FLAGS.video_save_path is not None
-        ep_rews, ep_lens, ep_norm_rews, ep_norm_lens, ep_frames = evaluation.evaluate_locomotion_policy(
+        (
+            ep_rews, ep_lens, ep_norm_rews, ep_norm_lens, ep_frames
+        ) = evaluation.evaluate_locomotion_policy(
             policy,
             vec_env,
             n_eval_episodes=FLAGS.n_eval_episodes,
@@ -119,13 +135,19 @@ def main(_):
         @torch.no_grad()
         def policy_fn(time_step):
             nonlocal state
-            if time_step.step_type == 0: # first time step
+            if time_step.step_type == 0:  # first time step
                 state = None
-            action, state = policy.predict(env.get_observation(time_step), state, deterministic=FLAGS.deterministic)
+            action, state = policy.predict(
+                env.get_observation(time_step),
+                state,
+                deterministic=FLAGS.deterministic
+            )
             return action
 
-        viewer_app = application.Application(title='Distillation', width=1024, height=768)
+        viewer_app = application.Application(title='Distillation',
+                                             width=1024, height=768)
         viewer_app.launch(environment_loader=env.dm_env, policy=policy_fn)
+
 
 if __name__ == '__main__':
     app.run(main)
