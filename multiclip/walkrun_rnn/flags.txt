@@ -1,0 +1,88 @@
+--noadvantage_weights
+--batch_size=8
+--noclip_len_upsampling
+--noclip_weighted
+--dataset_metrics_path=../data/dataset/large/dataset_metrics.npz
+--eval=act_noise: 0.0
+freq: 100000
+min_steps: 10
+n_episodes: 2500
+n_workers: 8
+run_at_beginning: false
+seed: 0
+serial: false
+termination_error_threshold: 0.3
+
+
+--noinclude_timestamp
+--nokeep_hdf5s_open
+--learning_rate=0.0005
+--max_grad_norm=1.0
+--model=config:
+  activation_fn: torch.nn.Tanh
+  layer_size: 1024
+  n_layers: 1
+  observables: !!python/tuple
+  - walker/joints_pos
+  - walker/joints_vel
+  - walker/sensors_velocimeter
+  - walker/sensors_gyro
+  - walker/end_effectors_pos
+  - walker/world_zaxis
+  - walker/actuator_activation
+  - walker/sensors_touch
+  - walker/sensors_torque
+  - walker/body_height
+  - walker/reference_rel_bodies_pos_local
+  - walker/reference_rel_bodies_quats
+  squash_output: true
+constructor: mocapact.distillation.model.RnnPolicy
+
+--n_hours=24
+--n_steps=100000
+--n_workers=1
+--normalize_obs
+--output_root=multiclip/walkrun_rnn
+--progress_bar_refresh_rate=1
+--norandomly_load_hdf5
+--norecord_video
+--save_top_k=10
+--seed=0
+--temperature=4.0
+--notrack_grad_norm
+--train_dataset_paths=../data/dataset/large/CMU_016_15.hdf5,../data/dataset/large/CMU_016_55.hdf5
+--train_rsi_rollouts=-1
+--train_start_rollouts=-1
+--val_rsi_rollouts=-1
+--val_start_rollouts=-1
+--nohelp
+--nohelpfull
+--nohelpshort
+--nohelpxml
+--noonly_check_args
+--nopdb
+--nopdb_post_mortem
+--norun_with_pdb
+--norun_with_profiling
+--use_cprofile_for_profiling
+--noalsologtostderr
+--log_dir=
+--logger_levels=
+--nologtostderr
+--showprefixforinfo
+--stderrthreshold=fatal
+--verbosity=0
+--test_random_seed=301
+--test_randomize_ordering_seed=
+--test_srcdir=
+--test_tmpdir=/var/folders/kd/773vphv51bdclptjzptm_4km0000gn/T/absl_testing
+--xml_output_file=
+--nopymjcf_debug
+--pymjcf_debug_full_dump_dir=
+--nopymjcf_log_xml
+--op_conversion_fallback_to_while_loop
+--hbm_oom_exit
+--runtime_oom_exit
+--delta_threshold=0.5
+--nott_check_filter
+--nott_single_core_summaries
