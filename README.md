@@ -1,4 +1,45 @@
-# MoCapAct
+# Docs
+
+## how to train
+
+where the code lies:
+- the model code is in `mocapact/distillation/model.py`, and is fully contained in the `RNNPolicy` class.
+    - the code is extensively documented
+    - the `RNNPolicy.training_step` does a forward step on one batch and returns the loss. this is then used by the trainer (see below) to optimize the weights. this only works with pytorch.
+- the dataset is defined in `mocapact/distillation/dataset.py` within the `ExpertDatasetRNN` class.
+    - the dataset simply loads data from the hdf5 files (these are "expert datasets" from mocapact, so not the original mocap data)
+    - you can index the dataset to get different episodes (rollouts). by default, the first 200 episodes are initialized at the start, and the next 200 episodes are initialized at random points in the snippet.
+- the setup and training loop is defined in `mocapact/distillation/trainer.py`
+    - that file can be run directly from the command line, it accepts all the arguments that you may wish to change in the training setup. 
+    - an example setup for how to run the file with all its arguments is shown in `script_train_rnn.sh`, run it with `source script_train_rnn.sh` from the command line (make sure to have the right python environment active).
+    - the trainer proceeds as follows
+        1. setup dataset, create dataloader (for batching, using a custom collate function to pad episodes of different sequence lengths)
+        2. (it also sets up validation things but we don't need them, so you can ignore that)
+        3. setup policy model
+        4. create callbacks for: checkpointing (saves the top-k models), training logs (csv file and tensorboard), validation, etc.
+        5. in the very end, the `PytorchLightning.Trainer` object is created which handles the training loop. in the call `trainer.fit`, the training loop is executed with the `policy` network and the `train_loader` data.
+    - once the training runs, you can run tensorboard to see how the training is going (loss, mse, time), using `source script_run_tensorboard.sh`
+
+## how to evaluate
+
+### option A: jupyter notebook
+
+run the notebook [nb_eval_rnn.ipynb](./nb_eval_rnn.ipynb), simply set the right clips, set the path to your saved model (see training section above), and run the cells to visualize how the agent interacts with the environment. 
+
+### option B: command line + interactive app
+
+configure the script [script_eval_rnn.sh](./script_eval_rnn.sh) to point to the right file where you stored your model, set the clip snippets you want to evaluate on, and (optionally) set the action noise leve you want to inject. then run the script and a window should pop up with an interactive visualization. press `spacebar` to start/pause, and press `backspace` to restart.
+
+![interactive evaluation](./assets/app.png)
+
+# also using JAX
+
+see notebook [nb_train_rnn_jax.ipynb](./nb_train_rnn_jax.ipynb)
+
+---
+---
+
+# MoCapAct README (original)
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/mhauskn/mocapact.github.io/master/assets/MoCapAct.gif" alt="montage" width="70%">
