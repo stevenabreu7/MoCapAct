@@ -41,7 +41,8 @@ flags.DEFINE_integer("val_start_rollouts", -1, "Number of start rollouts to cons
 flags.DEFINE_integer("val_rsi_rollouts", -1, "Number of RSI rollouts to consider in validation set")
 flags.DEFINE_bool("randomly_load_hdf5", False, "Whether to randomize the order of hdf5 files before loading")
 flags.DEFINE_bool("clip_len_upsampling", False, "Compensate for shorter clips by upsampling")
-flags.DEFINE_integer("save_every_n_minutes", 60, "How often to save latest model")
+flags.DEFINE_integer("save_every_n_minutes", None, "How often to save model")
+flags.DEFINE_integer("save_top_k", 10, "How many models to save")
 
 # Training hyperparameters
 flags.DEFINE_integer("n_hours", 24, "Number of hours to train")
@@ -227,11 +228,15 @@ def main(_):
     ############
     train_callbacks = []
     # Saving latest model callback
+    if FLAGS.save_every_n_minutes is not None:
+        print("[WARNING]: Saving every n minutes is not supported")
     last_model_callback = pl.callbacks.ModelCheckpoint(
         dirpath=osp.join(output_dir, 'model'),
-        save_top_k=0,
-        save_last=True,
-        train_time_interval=timedelta(minutes=FLAGS.save_every_n_minutes)
+        save_top_k=FLAGS.save_top_k,
+        monitor='train_loss',
+        filename='{epoch:02d}',
+        mode='min',
+        save_last=True
     )
     train_callbacks.append(last_model_callback)
     if val_loader is not None:  # Validation set callback
@@ -274,8 +279,8 @@ def main(_):
             verbose=1
         )
         train_callbacks.append(eval_callback)
-    csv_logger = pl.loggers.CSVLogger(output_dir, name='logs')
-    tb_logger = pl.loggers.TensorBoardLogger(output_dir, name='logs')
+    csv_logger = pl.loggers.CSVLogger(output_dir, name='logs_csv')
+    tb_logger = pl.loggers.TensorBoardLogger(output_dir, name='logs_tb')
     val_check_int = FLAGS.validation_freq if val_loader is not None else None
     # TODO: currently there's a bug when using GPU with RNNs
     accelerator = "cpu" if is_rnn else 'gpu'
