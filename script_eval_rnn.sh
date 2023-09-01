@@ -5,7 +5,7 @@ python -m mocapact.distillation.evaluate \
   --device cpu `# e.g., cuda` \
   --n_eval_episodes 0 `# 1000, set to 0 to just run the visualizer` \
   --act_noise 0. \
-  --noalways_init_at_clip_start \
+  --always_init_at_clip_start \
   --eval_save_path multi_clip_evaluation.npz \
   --visualize \
   --ghost_offset 1.
