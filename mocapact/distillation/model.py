@@ -224,9 +224,12 @@ class BasePolicy(policies.BasePolicy, pl.LightningModule):
 
 
 class SimpleRNN(nn.Module):
-    def __init__(self, input_size, hidden_size, output_size, afn, squash, bias):
+    """This is the simple RNN module that is used in the RNN policy.
+    Can also define the model directly in the policy, but this is cleaner.
+    """
+    def __init__(self, in_size, hidden_size, output_size, afn, squash, bias):
         super().__init__()
-        self.rnn = nn.RNNCell(input_size, hidden_size, bias=bias,
+        self.rnn = nn.RNNCell(in_size, hidden_size, bias=bias,
                               nonlinearity=afn)
         self.linear = nn.Linear(hidden_size, output_size, bias=bias)
         self.squash = squash
@@ -234,7 +237,21 @@ class SimpleRNN(nn.Module):
             self.nonlinearity = nn.Tanh()
 
     def forward(self, x):
-        # x: (B, T, input_size)
+        """Forward pass of the RNN. Takes in the input, and outputs the
+        prediction for each timestep.
+
+        Args:
+            x (torch.Tensor): The input to the RNN.
+                shape: (B, T, dim_feature) where B is the batch size, T is the
+                    number of timesteps, and dim_feature is the dimension of
+                    the feature space.
+
+        Returns:
+            torch.Tensor: The output of the RNN.
+                shape: (B, T, dim_action) where B is the batch size, T is the
+                    number of timesteps, and dim_action is the dimension of the
+                    action space.
+        """
         output = torch.zeros(x.size(0), x.size(1), self.linear.out_features)
         hx = None
         for t in range(x.size(1)):
@@ -269,6 +286,50 @@ class RnnPolicy(BasePolicy):
         optimizer_scheduler_class: Type[torch.optim.lr_scheduler._LRScheduler] = None,
         optimizer_scheduler_kwargs: Optional[Dict[str, Any]] = None
     ):
+        """Initializes the recurrent policy. The policy is a recurrent neural
+        network that takes in the features extracted from the observation and
+        outputs a Gaussian distribution over the actions.
+
+        Args (important):
+            learning_rate (float): The learning rate to use for the policy
+            n_layers (int, optional): The number of layers to use for the
+                policy. Defaults to 1.
+            layer_size (int, optional): The size of the layers to use for the
+                policy. Defaults to 1024.
+            activation_fn (Text, optional): The activation function to use for
+                the policy. Defaults to 'torch.nn.Tanh'.
+            squash_output (bool, optional): Whether to squash the output of the
+                policy using a sigmoidal function. Defaults to False.
+            std_dev (float, optional): The standard deviation to use for the
+                policy's actions in the forward pass. Defaults to 0.1.
+        Args (other):
+            observation_space (gym.spaces.Space): The observation space of the
+                environment
+            action_space (gym.spaces.Space): The action space of the
+                environment
+            observables (Union[Sequence[Text], Tuple[Sequence[Text]]]): The
+                observables to use for the policy
+            ref_steps (Sequence[int]): The reference steps to use for the
+                policy
+            features_extractor_class (Type[torch_layers.BaseFeaturesExtractor],
+                optional): The features extractor class to use for the policy.
+                Defaults to features_extractor.CmuHumanoidFeaturesExtractor.
+            features_extractor_kwargs (Optional[Dict[str, Any]], optional):
+                The keyword arguments to use for the features extractor class.
+                Defaults to None.
+            optimizer_class (Type[torch.optim.Optimizer], optional): The
+                optimizer class to use for the policy. Defaults to
+                torch.optim.Adam.
+            optimizer_kwargs (Optional[Dict[str, Any]], optional): The keyword
+                arguments to use for the optimizer class. Defaults to None.
+            optimizer_scheduler_class (Type[torch.optim.lr_scheduler],
+                optional): The optimizer scheduler class to use for the policy.
+                Defaults to None.
+            optimizer_scheduler_kwargs (Optional[Dict[str, Any]], optional):
+                The keyword arguments to use for the optimizer scheduler class.
+                Defaults to None.
+        """
+        # setup the base policy (takes care of feature extractor, etc.)
         super().__init__(
             observation_space, action_space, observables,
             ref_steps, learning_rate, activation_fn, squash_output, std_dev,
@@ -277,86 +338,96 @@ class RnnPolicy(BasePolicy):
             optimizer_scheduler_kwargs
         )
 
-        # setup the recurrent policy
+        # setup the policy's recurrent network (observation -> rnn -> action)
         self.n_layers = n_layers
         self.layer_size = layer_size
-
         assert self.n_layers == 1, 'only 1 layer supported for now'
-
-        # # debug
-        # print('n layers', self.n_layers)
-        # print('layer size', self.layer_size)
-        # print('features dim', self.features_dim)
-        # print('action space', self.action_space.shape)
-
         rnn_act = 'tanh' if activation_fn == 'torch.nn.Tanh' else 'relu'
-
         self.rnn = SimpleRNN(self.features_dim, self.layer_size, self.
                              action_space.shape[0], rnn_act, squash_output,
                              bias=True)
 
     def _get_constructor_parameters(self) -> Dict[str, Any]:
+        """Gets the constructor parameters for the policy. This is important
+        for saving and loading the policy (need to add the RNN params)."""
         data = super()._get_constructor_parameters()
-        data.update(
-            dict(
-                n_layers=self.n_layers,
-                layer_size=self.layer_size
-            )
-        )
+        data.update({'n_layers': self.n_layers, 'layer_size': self.layer_size})
         return data
 
     def initial_state(self, batch_size=1, deterministic=False):
-        """Used for outputting initial action in environment."""
+        """Used for outputting initial action in environment (all zeros)."""
         action_shape = (batch_size, self.action_space.shape[0])
         return np.zeros(action_shape, dtype=np.float32)
 
-    def forward(self, features: torch.Tensor, lens=None):
-        # features: (B, T, features_dim)
-        # # self.rnn_hx = self.rnn(features, self.rnn_hx)
-        # rnn_hx = self.rnn(features, None)
-        # # output = self.linear(self.rnn_hx)
-        # output = self.linear(rnn_hx)
-        # if self.squash_output:
-        #     output = self.nonlinearity(output)
+    def forward(self, features: torch.Tensor, seq_len=None):
+        """Forward pass of the policy. Takes in the features (already extracted
+        and preprocessed), and returns a Gaussian distribution over actions.
+        Importantly, the RNN predicts one action for each timestep.
+
+        Args:
+            features (torch.Tensor): features extracted from the observation.
+                shape: (B, T, features_dim)
+                    where B is the batch size, T is the number of timesteps,
+                    and features_dim is the dimension of the features extracted
+                    from the observation.
+                note: T is the max number of timesteps in the batch, so some
+                    values in the batch may be padded with zeros (-> seq_len)
+            seq_len (torch.Tensor, optional): The lengths of the sequences in
+                the batch. Defaults to None (i.e. no padding).
+
+        Returns:
+            Independent(Normal): A Gaussian distribution over the actions.
+                shape: (B, T, act_dim)
+        """
         if len(features.shape) == 2:
             features = features.unsqueeze(0)
         output = self.rnn(features)
-        # print('forward.output:', output.shape, output.get_device())
 
-        T = features.shape[1]
-        if lens is None:
-            lens = [T for _ in range(output.shape[0])]
+        if seq_len is None:
+            seq_len = [features.shape[1] for _ in range(output.shape[0])]
 
-        # flatten B and T dimensions
+        # flatten B and T dimensions (remove padded values)
         output = torch.cat([
-            output[i, :lens[i], :] for i in range(output.shape[0])
+            output[i, :seq_len[i], :] for i in range(output.shape[0])
         ], dim=0)
-        # output = output.flatten(start_dim=0, end_dim=1)
-        # print('forward.output:', output.shape, output.get_device())
 
         return Independent(Normal(output, self.std_dev), -1),
 
     def training_step(self, batch, batch_idx):
-        # features: (B, T, F)
-        # act: (B, T, A)
-        # weights: (B, T)
-        obs, act, weights, _, blens, _ = batch
+        """This is a whole batch training step. It extracts the features from
+        the observation, passes them through the policy, and then calculates
+        the MSE and loss, logs them, and returns the loss.
+
+        Args:
+            batch (Tuple[torch.Tensor]): The batch of data to train on.
+                batch[0]: obs (torch.Tensor): observations
+                    shape: (B, T, obs_dim)
+                batch[1]: act (torch.Tensor): actions
+                    shape: (B, T, act_dim)
+                batch[2]: weights (torch.Tensor): weights for the actions
+                    shape: (B, T)
+                batch[3]: seq_len (torch.Tensor): lengths of the sequences
+                    shape: (B)
+            batch_idx (int): The index of the batch
+
+        Returns:
+            torch.Tensor: The loss for the batch
+        """
+        obs, act, weights, seq_len = batch
         features = self.extract_features(obs, self.features_extractor)
 
-        # act_gaussian = Ind(Normal(output, std), -1)
-        # where output: (B, T, 0)
-        act_gaussian, = self(features, blens)
+        # act_gaussian: distribution of actions (B, T)
+        act_gaussian, = self(features, seq_len)
 
-        # need to flatten B and T dimensions for loss calculation
-        # also masked out the padded values
+        # flatten B and T for loss calculation (and remove padded values)
         act = torch.cat([
-            act[i, :blens[i], :] for i in range(act.shape[0])
+            act[i, :seq_len[i], :] for i in range(act.shape[0])
         ], dim=0)
         weights = torch.cat([
-            weights[i, :blens[i]] for i in range(weights.shape[0])
+            weights[i, :seq_len[i]] for i in range(weights.shape[0])
         ], dim=0)
         features = torch.cat([
-            features[i, :blens[i], :] for i in range(features.shape[0])
+            features[i, :seq_len[i], :] for i in range(features.shape[0])
         ], dim=0)
 
         loss = -weights @ act_gaussian.log_prob(act)

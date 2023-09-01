@@ -109,7 +109,7 @@ def pad_collate(batch):
     zz_pad = torch.nn.utils.rnn.pad_sequence(
         [torch.Tensor(z) for z in zz], batch_first=True
     )
-    return xx_pad, yy_pad, zz_pad, x_lens, y_lens, z_lens
+    return xx_pad, yy_pad, zz_pad, x_lens
 
 
 def main(_):
