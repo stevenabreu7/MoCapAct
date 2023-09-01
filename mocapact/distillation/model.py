@@ -223,46 +223,6 @@ class BasePolicy(policies.BasePolicy, pl.LightningModule):
         return actions, state
 
 
-class SimpleRNN(nn.Module):
-    """This is the simple RNN module that is used in the RNN policy.
-    Can also define the model directly in the policy, but this is cleaner.
-    """
-    def __init__(self, in_size, hidden_size, output_size, afn, squash, bias):
-        super().__init__()
-        self.rnn = nn.RNNCell(in_size, hidden_size, bias=bias,
-                              nonlinearity=afn)
-        self.linear = nn.Linear(hidden_size, output_size, bias=bias)
-        self.squash = squash
-        if self.squash:
-            self.nonlinearity = nn.Tanh()
-
-    def forward(self, x):
-        """Forward pass of the RNN. Takes in the input, and outputs the
-        prediction for each timestep.
-
-        Args:
-            x (torch.Tensor): The input to the RNN.
-                shape: (B, T, dim_feature) where B is the batch size, T is the
-                    number of timesteps, and dim_feature is the dimension of
-                    the feature space.
-
-        Returns:
-            torch.Tensor: The output of the RNN.
-                shape: (B, T, dim_action) where B is the batch size, T is the
-                    number of timesteps, and dim_action is the dimension of the
-                    action space.
-        """
-        output = torch.zeros(x.size(0), x.size(1), self.linear.out_features)
-        hx = None
-        for t in range(x.size(1)):
-            hx = self.rnn(input=x[:, t, :], hx=hx)
-            output_t = self.linear(hx)
-            if self.squash:
-                output_t = self.nonlinearity(output_t)
-            output[:, t, :] = output_t
-        return output
-
-
 class RnnPolicy(BasePolicy):
     """
     A recurrent policy.
@@ -343,9 +303,14 @@ class RnnPolicy(BasePolicy):
         self.layer_size = layer_size
         assert self.n_layers == 1, 'only 1 layer supported for now'
         rnn_act = 'tanh' if activation_fn == 'torch.nn.Tanh' else 'relu'
-        self.rnn = SimpleRNN(self.features_dim, self.layer_size, self.
-                             action_space.shape[0], rnn_act, squash_output,
-                             bias=True)
+
+        self.rnn_cell = nn.RNNCell(self.features_dim, self.layer_size,
+                                   bias=True, nonlinearity=rnn_act)
+        self.rnn_hx = None
+        self.rnn_lin = nn.Linear(self.layer_size, self.action_space.shape[0],
+                                 bias=True)
+        if squash_output:
+            self.rnn_nonlin = nn.Tanh()
 
     def _get_constructor_parameters(self) -> Dict[str, Any]:
         """Gets the constructor parameters for the policy. This is important
@@ -355,7 +320,9 @@ class RnnPolicy(BasePolicy):
         return data
 
     def initial_state(self, batch_size=1, deterministic=False):
-        """Used for outputting initial action in environment (all zeros)."""
+        """Used for outputting initial action in environment (all zeros).
+        Also resets the RNN's hidden state."""
+        self.rnn_hx = None
         action_shape = (batch_size, self.action_space.shape[0])
         return np.zeros(action_shape, dtype=np.float32)
 
@@ -379,12 +346,28 @@ class RnnPolicy(BasePolicy):
             Independent(Normal): A Gaussian distribution over the actions.
                 shape: (B, T, act_dim)
         """
-        if len(features.shape) == 2:
+        if len(features.shape) == 3:
+            # don't carry hidden state over between batches
+            self.rnn_hx = None
+        elif len(features.shape) == 2:
             features = features.unsqueeze(0)
-        output = self.rnn(features)
-
         if seq_len is None:
-            seq_len = [features.shape[1] for _ in range(output.shape[0])]
+            seq_len = [features.shape[1] for _ in range(features.shape[0])]
+
+        # forward pass through the RNN
+        # output will be of shape (B, T, dim_action)
+        # (if there is no time dimension, the RNN is only run for a single step
+        # but the hidden state is preserved, so the next time forward is
+        # called, it will continue from the previous hidden state)
+        output = torch.zeros(
+            features.size(0), features.size(1), self.rnn_lin.out_features
+        )
+        for t in range(features.size(1)):
+            self.rnn_hx = self.rnn_cell(features[:, t, :], hx=self.rnn_hx)
+            output_t = self.rnn_lin(self.rnn_hx)
+            if self.squash_output:
+                output_t = self.rnn_nonlin(output_t)
+            output[:, t, :] = output_t
 
         # flatten B and T dimensions (remove padded values)
         output = torch.cat([
