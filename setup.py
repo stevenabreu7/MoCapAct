@@ -21,5 +21,7 @@ setup(
         'pytorch-lightning==2.0.7',
         'stable-baselines3==1.8.0',
         'tensorboard',
+        'setuptools==66',
+        'wheel=0.38.4'
     ]
 )
