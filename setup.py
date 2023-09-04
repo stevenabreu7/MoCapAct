@@ -19,6 +19,7 @@ setup(
         'ml_collections',
         'mujoco',
         'pytorch-lightning==2.0.7',
-        'stable-baselines3==1.8.0'
+        'stable-baselines3==1.8.0',
+        'tensorboard',
     ]
 )
