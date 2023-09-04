@@ -19,6 +19,6 @@ setup(
         'ml_collections',
         'mujoco',
         'pytorch-lightning<1.7',
-        'stable-baselines3'
+        'stable-baselines3==1.8.0'
     ]
 )
