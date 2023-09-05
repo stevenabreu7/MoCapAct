@@ -9,6 +9,9 @@ setup(
     license='MIT',
     packages=find_packages(),
     install_requires=[
+        'setuptools==66',
+        'wheel==0.38.4',
+        'stable-baselines3==1.8.0',
         'azure.storage.blob==12.9.0',
         'cloudpickle>=2.1.0',
         'dm_control>=1.0.7',
@@ -18,7 +21,7 @@ setup(
         'imageio-ffmpeg',
         'ml_collections',
         'mujoco',
-        'pytorch-lightning<1.7',
-        'stable-baselines3'
+        'pytorch-lightning==2.0.7',
+        'tensorboard',
     ]
 )
