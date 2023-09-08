@@ -31,7 +31,7 @@ flags.DEFINE_string("clip_snippet", None, "A clip snippets, of form CMU_{clip id
 flags.DEFINE_string("device", "cpu", "Device to do rollouts on")
 
 # Environment hyperparameters
-flags.DEFINE_bool("always_init_at_clip_start", False, "Whether to initialize at beginning or random point in clip")
+flags.DEFINE_bool("always_init_at_clip_start", True, "Whether to initialize at beginning or random point in clip")
 flags.DEFINE_bool("deterministic", False, "Whether the policy is deterministic")
 flags.DEFINE_float("termination_error_threshold", 0.3, "Error for cutting off rollout")
 flags.DEFINE_integer("min_steps", 10, "Minimum steps left at end of episode")
@@ -117,15 +117,19 @@ def get_expert(expert_names, clip_id, start_step, end_step):
 
 def main(_):
     # set up GPT
-    is_in_eval_dir = osp.exists(osp.join(osp.dirname(osp.dirname(osp.dirname(FLAGS.policy_path))), 'model_constructor.txt'))
-    model_constructor_path = (osp.join(osp.dirname(osp.dirname(osp.dirname(FLAGS.policy_path))), 'model_constructor.txt')
-                              if is_in_eval_dir
-                              else osp.join(osp.dirname(osp.dirname(FLAGS.policy_path)), 'model_constructor.txt'))
-    with open(model_constructor_path, 'r') as f:
-        model_cls = utils.str_to_callable(f.readline())
-    policy = model_cls.load_from_checkpoint(FLAGS.policy_path, map_location=FLAGS.device)
-    policy.to(FLAGS.device)
-
+    # is_in_eval_dir = osp.exists(osp.join(osp.dirname(osp.dirname(osp.dirname(FLAGS.policy_path))), 'model_constructor.txt'))
+    # model_constructor_path = (osp.join(osp.dirname(osp.dirname(osp.dirname(FLAGS.policy_path))), 'model_constructor.txt')
+    #                           if is_in_eval_dir
+    #                           else osp.join(osp.dirname(osp.dirname(FLAGS.policy_path)), 'model_constructor.txt'))
+    # with open(model_constructor_path, 'r') as f:
+    #     model_cls = utils.str_to_callable(f.readline())
+    # policy = model_cls.load_from_checkpoint(FLAGS.policy_path, map_location=FLAGS.device)
+    # policy.to(FLAGS.device)
+    
+    from mocapact.distillation import model
+    policy = model.GPTPolicy.load_from_checkpoint('gpt.ckpt', map_location='cpu')
+    # policy.to(FLAGS.device)
+    
     # set up prompt policy
     dataset = utils.make_clip_collection([FLAGS.clip_snippet])
     if FLAGS.expert_root:
@@ -184,13 +188,14 @@ def main(_):
             np.save(
                 FLAGS.eval_save_path,
                 ep_lens
-            )
-
+            ) 
+    
     if FLAGS.visualize:
         # env for visualization
         env = motion_completion.MotionCompletionGymEnv(**env_kwargs)
 
         t, gpt_state, prompt_state = 0, None, None
+        
         @torch.no_grad()
         def policy_fn(time_step):
             nonlocal t, gpt_state, prompt_state
@@ -204,10 +209,11 @@ def main(_):
                 prompt_action, prompt_state = prompt_policy.predict(obs, prompt_state, deterministic=deterministic_prompt)
                 action = prompt_action
             else:
-                action = gpt_action
+                action = gpt_action        
+
             t += 1
             return action
-
+                
         viewer_app = application.Application(title='Motion Completion', width=1024, height=768)
         viewer_app.launch(environment_loader=env.dm_env, policy=policy_fn)
 
