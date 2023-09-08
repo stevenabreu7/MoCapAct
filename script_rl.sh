@@ -1,0 +1,25 @@
+python -m mocapact.clip_expert.train \
+  --clip_id CMU_016_15 `# e.g., CMU_016_22` \
+  --start_step 0 `# e.g., 0` \
+  --max_steps 300 `# e.g., 210 (can be larger than clip length)` \
+  --n_workers 1 `# e.g., 8` \
+  --log_root custom_experts_max300warm \
+  --total_timesteps 150000000 \
+  --min_steps 50 \
+  --n_steps 8192 \
+  --batch_size 512 \
+  --n_epochs 10 \
+  --clip_range 0.25 \
+  --gae_lambda 0.95 \
+  --noinclude_timestamp \
+  --learning_rate.start_val 1e-5 \
+  --learning_rate.decay 1.73 \
+  --eval.freq 1000000 \
+  --eval.min_steps 30 \
+  --eval.n_rsi_episodes 1000 \
+  --eval.n_start_episodes 100 \
+  --eval.start_eval_act_noise 0.01 \
+  --eval.early_stop.ep_length_threshold 0.98 \
+  --eval.early_stop.min_reward_delta 0.01 \
+  --record_video \
+  --warm_start_path custom_experts_max300/CMU_016_15-0-127/0/eval_rsi/model
