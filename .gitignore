@@ -131,3 +131,7 @@ dmypy.json
 .pyre/
 
 data/
+
+.gpt_policy_data/
+gpt_policy_data_running.npz
+gpt.ckpt
