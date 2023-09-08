@@ -21,6 +21,6 @@ python -m mocapact.clip_expert.train \
   --eval.start_eval_act_noise 0.01 \
   --eval.early_stop.ep_length_threshold 0.98 \
   --eval.early_stop.min_reward_delta 0.01 \
-  --warm_start_path ../data/experts/CMU_016_55-0-47/eval_rsi/model \
+  --warm_start_path ../data/experts/CMU_016_15-0-127/eval_rsi/model \
   --include_clip_id \
-  --device cuda:0
+  --device cuda:1
