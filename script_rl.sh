@@ -1,10 +1,10 @@
 python -m mocapact.clip_expert.train \
   --clip_id CMU_016_15 `# e.g., CMU_016_22` \
   --start_step 0 `# e.g., 0` \
-  --max_steps 300 `# e.g., 210 (can be larger than clip length)` \
-  --n_workers 1 `# e.g., 8` \
-  --log_root custom_experts_max300warm \
-  --total_timesteps 150000000 \
+  --max_steps 400 `# e.g., 210 (can be larger than clip length)` \
+  --n_workers 8 `# e.g., 8` \
+  --log_root xpert_rl/walk_warm_400steps \
+  --total_timesteps 20000000 `#150000000 - 20000` \
   --min_steps 50 \
   --n_steps 8192 \
   --batch_size 512 \
@@ -14,12 +14,14 @@ python -m mocapact.clip_expert.train \
   --noinclude_timestamp \
   --learning_rate.start_val 1e-5 \
   --learning_rate.decay 1.73 \
-  --eval.freq 1000000 \
+  --eval.freq 50000 `#1000000 - 10000` \
   --eval.min_steps 30 \
-  --eval.n_rsi_episodes 1000 \
+  --eval.n_rsi_episodes 500 `#1000 - 100` \
   --eval.n_start_episodes 100 \
   --eval.start_eval_act_noise 0.01 \
   --eval.early_stop.ep_length_threshold 0.98 \
   --eval.early_stop.min_reward_delta 0.01 \
-  --record_video \
-  --warm_start_path custom_experts_max300/CMU_016_15-0-127/0/eval_rsi/model
+  --warm_start_path ../data/experts/CMU_016_15-0-127/eval_rsi/model \
+  --include_clip_id \
+  --device cuda:1
+  `#--record_video \`

@@ -12,7 +12,8 @@ def make_env_kwargs(
     ghost_offset: float = 1.,
     always_init_at_clip_start: bool = False,
     termination_error_threshold: float = 0.3,
-    act_noise: float = 0.1
+    act_noise: float = 0.1,
+    include_clip_id=False
 ):
     """
     Gives the environment kwargs used to construct the
@@ -35,7 +36,8 @@ def make_env_kwargs(
         ref_steps=(0,),
         mocap_path=mocap_path,
         act_noise=act_noise,
-        task_kwargs=task_kwargs
+        task_kwargs=task_kwargs,
+        include_clip_id=include_clip_id
     )
 
     return env_kwargs

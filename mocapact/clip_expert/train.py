@@ -84,6 +84,9 @@ flags.DEFINE_bool("record_video", False, "Whether to record video for evaluation
 flags.DEFINE_bool("include_timestamp", True, "Whether to include timestamp in log directory")
 flags.DEFINE_string("warm_start_path", None, "If desired, path to warm-start parameters")
 
+# stupid bug fix idk what's happening
+flags.DEFINE_bool("include_clip_id", False, "include the clip id in the env obs space")
+
 flags.mark_flag_as_required('clip_id')
 flags.mark_flag_as_required('log_root')
 
@@ -98,7 +101,8 @@ def make_env(seed=0, start_step=0, end_step=0, min_steps=10, training=True,
         min_steps=min_steps,
         always_init_at_clip_start=always_init_at_clip_start,
         termination_error_threshold=termination_error_threshold,
-        act_noise=act_noise
+        act_noise=act_noise,
+        include_clip_id=FLAGS.include_clip_id
     )
     env = env_util.make_vec_env(
         env_id=tracking.MocapTrackingGymEnv,
@@ -275,7 +279,7 @@ def main(_):
         callbacks.NormalizedRolloutCallback(),
         sb3_callbacks.LogOnRolloutEndCallback(log_dir)
     ]
-    model.learn(FLAGS.total_timesteps, callback=callback)
+    model.learn(FLAGS.total_timesteps, callback=callback, progress_bar=True)
 
 if __name__ == '__main__':
     app.run(main)
