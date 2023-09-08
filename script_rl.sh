@@ -1,9 +1,9 @@
 python -m mocapact.clip_expert.train \
-  --clip_id CMU_016_15 `# e.g., CMU_016_22` \
+  --clip_id CMU_016_55 `# e.g., CMU_016_22` \
   --start_step 0 `# e.g., 0` \
   --max_steps 400 `# e.g., 210 (can be larger than clip length)` \
-  --n_workers 8 `# e.g., 8` \
-  --log_root xpert_rl/walk_warm_400steps \
+  --n_workers 16 `# e.g., 8` \
+  --log_root xpert_rl/run_warm_400steps \
   --total_timesteps 20000000 `#150000000 - 20000` \
   --min_steps 50 \
   --n_steps 8192 \
@@ -21,7 +21,6 @@ python -m mocapact.clip_expert.train \
   --eval.start_eval_act_noise 0.01 \
   --eval.early_stop.ep_length_threshold 0.98 \
   --eval.early_stop.min_reward_delta 0.01 \
-  --warm_start_path ../data/experts/CMU_016_15-0-127/eval_rsi/model \
+  --warm_start_path ../data/experts/CMU_016_55-0-47/eval_rsi/model \
   --include_clip_id \
-  --device cuda:1
-  `#--record_video \`
+  --device cuda:0
