@@ -1,5 +1,6 @@
 multiclip/*
 custom_experts*
+xpert_rl/*
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
