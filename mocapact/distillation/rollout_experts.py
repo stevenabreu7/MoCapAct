@@ -91,7 +91,7 @@ from absl import app, flags, logging
 from tqdm import tqdm
 from pathlib import Path
 
-from stable_baselines3.common.vec_env import SubprocVecEnv
+from stable_baselines3.common.vec_env import SubprocVecEnv, DummyVecEnv
 
 from dm_control.locomotion.tasks.reference_pose import types
 from mocapact import observables
@@ -119,6 +119,9 @@ flags.DEFINE_list("ref_steps", [1, 2, 3, 4, 5], "Indices for reference observati
 flags.DEFINE_integer("min_steps", 10, "For random rollouts, latest point to start in the clip")
 flags.DEFINE_bool("log_all_proprios", False, "Log all the low-level observations from the humanoid")
 flags.DEFINE_bool("log_cameras", False, "Log all the camera images from the humanoid")
+
+flags.DEFINE_bool("log_images", False, "Log all the proper camera images from the humanoid")
+flags.DEFINE_float("bias_time", 1.0, "Replace time_in_clip by this value")
 
 # Miscellaneous
 flags.DEFINE_integer("seed", 0, "RNG seed")
@@ -189,7 +192,7 @@ def collect_rollouts(clip_path, always_init_at_clip_start):
         n_envs=FLAGS.n_workers,
         seed=FLAGS.seed,
         env_kwargs=env_kwargs,
-        vec_env_cls=SubprocVecEnv,
+        vec_env_cls=DummyVecEnv,
         vec_monitor_cls=wrappers.MocapTrackingVecMonitor
     )
 
@@ -199,21 +202,25 @@ def collect_rollouts(clip_path, always_init_at_clip_start):
         device=FLAGS.device,
         seed=FLAGS.seed
     )
-    model.policy.observation_space = vec_env.observation_space # env's obs space may differ from policy's
+    # env's obs space may differ from policy's
+    model.policy.observation_space = vec_env.observation_space
     model.policy.log_std.detach().fill_(np.log(FLAGS.act_noise))
     # Normalization statistics
     with open(osp.join(clip_path, 'eval_rsi/model/vecnormalize.pkl'), 'rb') as f:
         norm_env = pickle.load(f)
     obs = vec_env.reset()
+    if 'walker/time_in_clip' in obs:
+        obs['walker/time_in_clip'] = FLAGS.bias_time * np.ones_like(obs['walker/time_in_clip'])
 
     ctr = 0
-    all_observations, all_actions, all_mean_actions, all_rewards, all_values, all_advs = [], [], [], [], [], []
+    all_observations, all_actions, all_mean_actions, all_rewards, all_values, all_advs, all_ims = [], [], [], [], [], [], []
     all_normalized_returns, all_normalized_lengths, all_early_terminations = [], [], []
     curr_observations = [{k: [] for k in obs.keys()} for _ in range(FLAGS.n_workers)]
     curr_actions = [[] for _ in range(FLAGS.n_workers)]
     curr_mean_actions = [[] for _ in range(FLAGS.n_workers)]
     curr_rewards = [[] for _ in range(FLAGS.n_workers)]
     curr_values = [[] for _ in range(FLAGS.n_workers)]
+    curr_ims = [[] for _ in range(FLAGS.n_workers)]
     n_rollouts = FLAGS.n_start_rollouts if always_init_at_clip_start else FLAGS.n_rsi_rollouts
     while True:
         for i in range(FLAGS.n_workers):
@@ -229,13 +236,20 @@ def collect_rollouts(clip_path, always_init_at_clip_start):
         act, _ = model.policy.predict(obs, deterministic=False)
         mean_act, _ = model.policy.predict(obs, deterministic=True)
         obs, rews, dones, infos = vec_env.step(act)
+        if 'walker/time_in_clip' in obs:
+            obs['walker/time_in_clip'] = FLAGS.bias_time * np.ones_like(obs['walker/time_in_clip'])
+        if FLAGS.log_images:
+            im = np.expand_dims(vec_env.render(mode='rgb_array'), 0)
 
         for i in range(FLAGS.n_workers):
             curr_actions[i].append(act[i])
             curr_mean_actions[i].append(mean_act[i])
             curr_rewards[i].append(rews[i])
             curr_values[i].append(val[i])
+            if FLAGS.log_images:
+                curr_ims[i].append(im[i])
             if dones[i]:
+                print(f"EPISODE #{len(all_actions)+1}, LENGTH: ", len(curr_actions[i]))
                 # Add terminal observation
                 for k, v in infos[i]['terminal_observation'].items():
                     curr_observations[i][k].append(v)
@@ -247,6 +261,8 @@ def collect_rollouts(clip_path, always_init_at_clip_start):
                 all_mean_actions.append(np.stack(curr_mean_actions[i]))
                 all_rewards.append(np.array(curr_rewards[i]))
                 all_values.append(np.array(curr_values[i]))
+                if FLAGS.log_images:
+                    all_ims.append(np.array(curr_ims[i]))
 
                 # GAE(lambda)
                 rew, value = curr_rewards[i], curr_values[i]
@@ -268,6 +284,8 @@ def collect_rollouts(clip_path, always_init_at_clip_start):
                 curr_mean_actions[i] = []
                 curr_rewards[i] = []
                 curr_values[i] = []
+                if FLAGS.log_images:
+                    curr_ims[i] = []
 
                 ctr += 1
                 if ctr >= n_rollouts:
@@ -280,7 +298,8 @@ def collect_rollouts(clip_path, always_init_at_clip_start):
                         advantages=all_advs,
                         normalized_returns=np.array(all_normalized_returns),
                         normalized_lengths=np.array(all_normalized_lengths),
-                        early_terminations=np.array(all_early_terminations)
+                        early_terminations=np.array(all_early_terminations),
+                        images=None if not FLAGS.log_images else all_ims
                         )
 
 def create_dataset(expert_paths, output_path):
@@ -307,11 +326,15 @@ def create_dataset(expert_paths, output_path):
         all_advantages = start_results['advantages'] + rsi_results['advantages']
         all_values = start_results['values'] + rsi_results['values']
         all_early_terminations = np.concatenate([start_results['early_terminations'], rsi_results['early_terminations']])
+        if FLAGS.log_images:
+            all_images = start_results['images'] + rsi_results['images']
 
-        for i in range(len(all_actions)): # iterate over episodes
+        for i in tqdm(range(len(all_actions))):  # iterate over episodes
             rollout_subgrp = clip_grp.create_group(str(i))
             observations, acts, mean_acts = all_observations[i], all_actions[i], all_mean_actions[i]
             rews, vals, advs = all_rewards[i], all_values[i], all_advantages[i]
+            if FLAGS.log_images:
+                ims = all_images[i]
 
             # Actions
             act_dset = rollout_subgrp.create_dataset("actions", acts.shape, np.float32)
@@ -349,6 +372,11 @@ def create_dataset(expert_paths, output_path):
             adv_dset = rollout_subgrp.create_dataset("advantages", advs.shape, np.float32)
             adv_dset[...] = advs
             advantages[clip].append(advs)
+
+            # Images
+            if FLAGS.log_images:
+                im_dset = rollout_subgrp.create_dataset("images", ims.shape, np.uint8)
+                im_dset[...] = ims
 
             # Accumulate statistics
             proprio_total += proprio.sum(0)

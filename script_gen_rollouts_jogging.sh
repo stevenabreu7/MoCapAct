@@ -1,0 +1,16 @@
+python -m mocapact.distillation.rollout_experts \
+    --input_dirs ../data/experts/CMU_016_36-0-49 `# e.g., experts` \
+    --bias_time 0.1 \
+    --act_noise 0.08 \
+    --termination_error_threshold 0.4 \
+    --n_start_rollouts 500 \
+    --n_rsi_rollouts 500 \
+    --nolog_images \
+    --output_path ../data/custom_rollouts_jogging/file_name_ignored.hdf5 \
+    --n_workers 1 `# e.g., 8` \
+    --device cpu `# e.g., cuda` \
+    --min_steps 70 \
+    --ref_steps 1,2,3,4,5 \
+    --separate_clips \
+    --log_all_proprios \
+    --nolog_cameras # set to True to log images from the cameras
