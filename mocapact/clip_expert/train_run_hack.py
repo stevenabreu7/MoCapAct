@@ -1,3 +1,5 @@
+ #!/usr/bin/env python3
+
 """
 Main script for training the clip experts.
 """
@@ -29,6 +31,7 @@ from mocapact.sb3 import utils as sb3_utils
 from mocapact.sb3 import wrappers
 from mocapact.clip_expert import callbacks
 from mocapact.clip_expert import utils as clip_expert_utils
+from dm_control.locomotion.tasks.reference_pose import cmu_subsets
 
 FLAGS = flags.FLAGS
 flags.DEFINE_string("clip_id", None, "Name of reference clip. See cmu_subsets.py")
@@ -50,6 +53,9 @@ flags.DEFINE_float("clip_range", 0.2, "Clipping parameter for PPO")
 flags.DEFINE_float("target_kl", float('inf'), "Limits KL divergence in updating policy")
 flags.DEFINE_float("max_grad_norm", 1., "Clipping value for gradient norm")
 flags.DEFINE_float("gae_lambda", 0.95, "GAE lambda parameter")
+flags.DEFINE_string("postfix", "", "Postfix for log directory")
+flags.DEFINE_enum("reward_fn", "comic", ["comic","tracking+speed", "tracking+speed_combined", 'tracking+speed_periodic'], "Reward function to use")
+
 lr_config = ml_collections.ConfigDict()
 lr_config.start_val = 1e-4  # Initial step size
 lr_config.decay = 1.73 # Decay rate for learning rate
@@ -68,7 +74,7 @@ eval_config.freq = int(1e5)                             # After how many total e
 eval_config.n_rsi_episodes = 32                         # Number of episodes to evaluate the policy from random initial states
 eval_config.rsi_eval_act_noise = 0.1                    # Action noise to apply for random initial states
 eval_config.n_start_episodes = 32                       # Number of episodes to evaluate the policy from the start of snippet
-eval_config.start_eval_act_noise = 0.1                  # Action noise to apply for start of snippet
+eval_config.start_eval_act_noise = 0.3                  # Action noise to apply for start of snippet
 eval_config.early_stop = ml_collections.ConfigDict()
 eval_config.early_stop.ep_length_threshold = 1.         # Episode length threshold for early stopping
 eval_config.early_stop.min_reward_delta = 0.            # Minimum change in normalized reward to qualify as improvement
@@ -102,10 +108,11 @@ def make_env(seed=0, start_step=0, end_step=0, min_steps=10, training=True,
         always_init_at_clip_start=always_init_at_clip_start,
         termination_error_threshold=termination_error_threshold,
         act_noise=act_noise,
-        include_clip_id=FLAGS.include_clip_id
+        include_clip_id=FLAGS.include_clip_id,
+        reward_type=FLAGS.reward_fn
     )
     env = env_util.make_vec_env(
-        env_id=tracking.MocapTrackingGymEnv,
+        env_id=tracking.MocapTrackingGymEnvRunHack,
         n_envs=FLAGS.n_workers,
         seed=seed,
         env_kwargs=env_kwargs,
@@ -123,8 +130,18 @@ def main(_):
     snippet_length = min(clip_length - FLAGS.start_step, FLAGS.max_steps)
     end_step = FLAGS.start_step + snippet_length
 
+    # get current timestamp
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+
     # Log directory
-    log_dir = osp.join(FLAGS.log_root, f"{FLAGS.clip_id}-{FLAGS.start_step}-{end_step}", str(FLAGS.seed))
+    log_dir = osp.join(FLAGS.log_root, f"{FLAGS.clip_id}-{FLAGS.start_step}-{end_step}", timestamp + FLAGS.postfix, str(FLAGS.seed))
+    
+    #check if logdir exists
+    if osp.exists(log_dir):
+        print("logdir already exists, skipping")
+        return 1
+    
+    
     if FLAGS.include_timestamp:
         now = datetime.now()
         log_dir = osp.join(log_dir, now.strftime("%Y-%m-%d_%H-%M-%S"))
@@ -142,6 +159,11 @@ def main(_):
     start_eval_path = osp.join(log_dir, 'eval_start')
     Path(osp.join(rsi_eval_path, 'model')).mkdir(parents=True)
     Path(osp.join(start_eval_path, 'model')).mkdir(parents=True)
+    
+    video_eval_path = osp.join(log_dir, 'eval_rsi/evaluations')
+    Path(video_eval_path).mkdir(parents=True)
+    video_eval_path = osp.join(log_dir, 'eval_start/evaluations')
+    Path(video_eval_path).mkdir(parents=True)
 
     # Logger configuration
     print(FLAGS.flags_into_string())

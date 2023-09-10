@@ -9,6 +9,7 @@ from typing import Any, Dict, Optional, Tuple, Union
 from dm_control.locomotion.mocap import cmu_mocap_data
 from dm_control.locomotion.tasks.reference_pose import types
 from dm_control.locomotion.tasks.reference_pose import tracking
+from dm_control.locomotion.tasks.reference_pose import tracking_continuation
 from dm_control.locomotion.walkers import cmu_humanoid
 
 import torch
@@ -146,7 +147,7 @@ class MocapTrackingGymEnvRunHack(dm_control_wrapper.DmControlWrapper):
         task_kwargs['dataset'] = self._dataset
         task_kwargs['ref_steps'] = ref_steps
         super().__init__(
-            tracking.MultiClipMocapTracking,
+            tracking_continuation.MocapClipTrackingContinuation,
             task_kwargs=task_kwargs,
             environment_kwargs=environment_kwargs,
             act_noise=act_noise,
