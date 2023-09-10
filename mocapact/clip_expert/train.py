@@ -1,3 +1,5 @@
+ #!/usr/bin/env python3
+
 """
 Main script for training the clip experts.
 """
@@ -29,6 +31,7 @@ from mocapact.sb3 import utils as sb3_utils
 from mocapact.sb3 import wrappers
 from mocapact.clip_expert import callbacks
 from mocapact.clip_expert import utils as clip_expert_utils
+from dm_control.locomotion.tasks.reference_pose import cmu_subsets
 
 FLAGS = flags.FLAGS
 flags.DEFINE_string("clip_id", None, "Name of reference clip. See cmu_subsets.py")
@@ -68,7 +71,7 @@ eval_config.freq = int(1e5)                             # After how many total e
 eval_config.n_rsi_episodes = 32                         # Number of episodes to evaluate the policy from random initial states
 eval_config.rsi_eval_act_noise = 0.1                    # Action noise to apply for random initial states
 eval_config.n_start_episodes = 32                       # Number of episodes to evaluate the policy from the start of snippet
-eval_config.start_eval_act_noise = 0.1                  # Action noise to apply for start of snippet
+eval_config.start_eval_act_noise = 0.3                  # Action noise to apply for start of snippet
 eval_config.early_stop = ml_collections.ConfigDict()
 eval_config.early_stop.ep_length_threshold = 1.         # Episode length threshold for early stopping
 eval_config.early_stop.min_reward_delta = 0.            # Minimum change in normalized reward to qualify as improvement
@@ -105,7 +108,7 @@ def make_env(seed=0, start_step=0, end_step=0, min_steps=10, training=True,
         include_clip_id=FLAGS.include_clip_id
     )
     env = env_util.make_vec_env(
-        env_id=tracking.MocapTrackingGymEnv,
+        env_id=tracking.MocapTrackingGymEnvRunHack,
         n_envs=FLAGS.n_workers,
         seed=seed,
         env_kwargs=env_kwargs,
@@ -142,6 +145,11 @@ def main(_):
     start_eval_path = osp.join(log_dir, 'eval_start')
     Path(osp.join(rsi_eval_path, 'model')).mkdir(parents=True)
     Path(osp.join(start_eval_path, 'model')).mkdir(parents=True)
+    
+    video_eval_path = osp.join(log_dir, 'eval_rsi/evaluations')
+    Path(video_eval_path).mkdir(parents=True)
+    video_eval_path = osp.join(log_dir, 'eval_start/evaluations')
+    Path(video_eval_path).mkdir(parents=True)
 
     # Logger configuration
     print(FLAGS.flags_into_string())
