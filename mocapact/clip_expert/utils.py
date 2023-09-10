@@ -13,7 +13,8 @@ def make_env_kwargs(
     always_init_at_clip_start: bool = False,
     termination_error_threshold: float = 0.3,
     act_noise: float = 0.1,
-    include_clip_id=False
+    include_clip_id=False,
+    reward_type: Text = 'comic',
 ):
     """
     Gives the environment kwargs used to construct the
@@ -25,7 +26,7 @@ def make_env_kwargs(
         end_steps=[end_step]
     )
     task_kwargs = dict(
-        reward_type='comic',
+        reward_type=reward_type,
         min_steps=min_steps-1,
         ghost_offset=np.array([ghost_offset, 0., 0.]),
         always_init_at_clip_start=always_init_at_clip_start,
