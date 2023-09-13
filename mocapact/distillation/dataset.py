@@ -612,4 +612,4 @@ class ExpertDatasetRNN(ExpertDataset):
                 k: v[:self.max_n_timesteps] for k, v in obs.items()
             }
 
-        return obs, act, weight
+        return obs, act, weight, dset_idx
