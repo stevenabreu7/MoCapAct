@@ -411,7 +411,10 @@ class ExpertDatasetRNN(ExpertDataset):
         advantage_weights: bool = True,
         temperature: Optional[float] = None,
         max_weight: float = float('inf'),
-        keep_hdf5s_open: bool = False
+        keep_hdf5s_open: bool = False,
+        drop_first_n_timesteps: int = 0,
+        drop_last_n_timesteps: int = 0,
+        max_n_timesteps: int = None
     ):
         assert n_start_rollouts == -1, 'n_start_rollouts must be -1'
         assert n_rsi_rollouts == -1, 'n_rsi_rollouts must be -1'
@@ -424,14 +427,22 @@ class ExpertDatasetRNN(ExpertDataset):
             n_rsi_rollouts, concat_observables, clip_weighted,
             advantage_weights, temperature, max_weight, keep_hdf5s_open
         )
+        self.num_datasets = len(self._hdf5_fnames)
+        self.drop_first_n_timesteps = drop_first_n_timesteps
+        self.drop_last_n_timesteps = drop_last_n_timesteps
+        self.max_n_timesteps = max_n_timesteps
+        if self.drop_first_n_timesteps > 0:
+            print(f'[warning] dropping first {self.drop_first_n_timesteps} timesteps')
+        if self.drop_last_n_timesteps > 0:
+            print(f'[warning] dropping last {self.drop_last_n_timesteps} timesteps')
+        if self.max_n_timesteps is not None:
+            print(f'[warning] limiting to {self.max_n_timesteps} timesteps')
 
     def _create_offsets(self):
         """
         Same as super._create_offsets, but using episode indices instead
         of step indices.
         """
-        print('called _create_offsets() in ExpertDatasetRNN')
-
         self._n_episodes = 0
 
         # indices are timestep indices across episodes and clips
@@ -567,6 +578,7 @@ class ExpertDatasetRNN(ExpertDataset):
         if self._temperature is None or self._temperature == float('inf'):
             # always sequential
             weight = np.ones(end_idx-start_idx)
+            weight = np.ones((act.shape[0]))
         elif self._clip_weighted:
             key = self._dset_groups[dset_idx][clip_idx].split('/')[0]
             ret = self._snippet_returns[key]
@@ -586,4 +598,19 @@ class ExpertDatasetRNN(ExpertDataset):
 
         weight = np.array(np.minimum(weight, self._max_weight), dtype=np.float32)
 
-        return obs, act, weight
+        # drop first and last n timesteps
+        weight = weight[self.drop_first_n_timesteps:-self.drop_last_n_timesteps]
+        act = act[self.drop_first_n_timesteps:-self.drop_last_n_timesteps]
+        obs = {
+            k: v[self.drop_first_n_timesteps:-self.drop_last_n_timesteps] for k, v in obs.items()
+        }
+
+        # limit to max_n_timesteps
+        if self.max_n_timesteps is not None:
+            weight = weight[:self.max_n_timesteps]
+            act = act[:self.max_n_timesteps]
+            obs = {
+                k: v[:self.max_n_timesteps] for k, v in obs.items()
+            }
+
+        return obs, act, weight, dset_idx# np.ones(weight.shape[0])*dset_idx
