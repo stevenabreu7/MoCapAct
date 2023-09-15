@@ -119,6 +119,8 @@ flags.DEFINE_list("ref_steps", [1, 2, 3, 4, 5], "Indices for reference observati
 flags.DEFINE_integer("min_steps", 10, "For random rollouts, latest point to start in the clip")
 flags.DEFINE_bool("log_all_proprios", False, "Log all the low-level observations from the humanoid")
 flags.DEFINE_bool("log_cameras", False, "Log all the camera images from the humanoid")
+flags.DEFINE_integer("min_length", 100, "Minimum length of a rollout")
+flags.DEFINE_integer("max_length", 100, "Minimum length of a rollout")
 
 flags.DEFINE_bool("log_images", False, "Log all the proper camera images from the humanoid")
 flags.DEFINE_float("bias_time", 1.0, "Replace time_in_clip by this value")
@@ -158,15 +160,15 @@ def get_expert_paths(input_dirs):
             expert_paths[expert_name] = path
     return expert_paths, clips
 
-def collect_rollouts(clip_path, always_init_at_clip_start):
+def collect_rollouts(clip_path, always_init_at_clip_start, max_steps=None):
     print(clip_path)
     # Make environment
     with open(osp.join(clip_path, 'clip_info.json')) as f:
         clip_info = json.load(f)
     clip_id = clip_info['clip_id']
     start_step = clip_info['start_step']
-    end_step = clip_info['end_step']
-
+    end_step = max_steps if max_steps is not None else clip_info['end_step']
+    
     ref_steps = [int(s) for s in FLAGS.ref_steps]
     dataset = types.ClipCollection(
         ids=[clip_id],
@@ -182,13 +184,13 @@ def collect_rollouts(clip_path, always_init_at_clip_start):
     env_kwargs = dict(
         dataset=dataset,
         ref_steps=ref_steps,
-        act_noise=0.,
+        act_noise=FLAGS.act_noise,
         enable_all_proprios=FLAGS.log_all_proprios,
         enable_cameras=FLAGS.log_cameras,
         task_kwargs=task_kwargs
     )
     vec_env = env_util.make_vec_env(
-        env_id=tracking.MocapTrackingGymEnv,
+        env_id=tracking.MocapTrackingGymEnvRunHack,
         n_envs=FLAGS.n_workers,
         seed=FLAGS.seed,
         env_kwargs=env_kwargs,
@@ -222,6 +224,8 @@ def collect_rollouts(clip_path, always_init_at_clip_start):
     curr_values = [[] for _ in range(FLAGS.n_workers)]
     curr_ims = [[] for _ in range(FLAGS.n_workers)]
     n_rollouts = FLAGS.n_start_rollouts if always_init_at_clip_start else FLAGS.n_rsi_rollouts
+    
+    early_fall = [False] * FLAGS.n_workers
     while True:
         for i in range(FLAGS.n_workers):
             for k, v in obs.items():
@@ -235,7 +239,9 @@ def collect_rollouts(clip_path, always_init_at_clip_start):
 
         act, _ = model.policy.predict(obs, deterministic=False)
         mean_act, _ = model.policy.predict(obs, deterministic=True)
+        
         obs, rews, dones, infos = vec_env.step(act)
+          
         if 'walker/time_in_clip' in obs:
             obs['walker/time_in_clip'] = FLAGS.bias_time * np.ones_like(obs['walker/time_in_clip'])
         if FLAGS.log_images:
@@ -246,8 +252,9 @@ def collect_rollouts(clip_path, always_init_at_clip_start):
             curr_mean_actions[i].append(mean_act[i])
             curr_rewards[i].append(rews[i])
             curr_values[i].append(val[i])
-            if FLAGS.log_images and i < len(im):
+            if FLAGS.log_images:
                 curr_ims[i].append(im[i])
+                
             if dones[i]:
                 print(f"EPISODE #{len(all_actions)+1}, LENGTH: ", len(curr_actions[i]))
                 # Add terminal observation
@@ -255,8 +262,14 @@ def collect_rollouts(clip_path, always_init_at_clip_start):
                     curr_observations[i][k].append(v)
 
                 # Add episode to buffer
-                curr_obs = curr_observations[i]
-                all_observations.append({k: np.stack(v) for k, v in curr_obs.items()})
+                curr_obs = {k: np.stack(v) for k, v in curr_observations[i].items()}
+                curr_obs = {k: v[:FLAGS.max_length] for k, v in curr_obs.items()}
+                curr_actions[i] = curr_actions[i][:FLAGS.max_length]
+                curr_mean_actions[i] = curr_mean_actions[i][:FLAGS.max_length]
+                curr_rewards[i] = curr_rewards[i][:FLAGS.max_length]
+                curr_values[i] = curr_values[i][:FLAGS.max_length]
+                
+                all_observations.append(curr_obs)
                 all_actions.append(np.stack(curr_actions[i]))
                 all_mean_actions.append(np.stack(curr_mean_actions[i]))
                 all_rewards.append(np.array(curr_rewards[i]))
@@ -301,6 +314,7 @@ def collect_rollouts(clip_path, always_init_at_clip_start):
                         early_terminations=np.array(all_early_terminations),
                         images=None if not FLAGS.log_images else all_ims
                         )
+
 
 def create_dataset(expert_paths, output_path):
     dset = h5py.File(output_path, 'w')
@@ -376,6 +390,7 @@ def create_dataset(expert_paths, output_path):
             # Images
             if FLAGS.log_images:
                 im_dset = rollout_subgrp.create_dataset("images", ims.shape, np.uint8)
+                print(ims.shape)
                 im_dset[...] = ims
 
             # Accumulate statistics
@@ -459,7 +474,7 @@ def main(_):
     # Create directory for hdf5 file(s)
     Path(osp.dirname(FLAGS.output_path)).mkdir(parents=True, exist_ok=True)
     paths, clips = get_expert_paths(FLAGS.input_dirs)
-
+    
     if FLAGS.separate_clips:
         proprio_total, sq_proprio_total, act_total, sq_act_total, mean_act_total, sq_mean_act_total, count = 0, 0, 0, 0, 0, 0, 0
         snippet_returns, values, advantages = dict(), dict(), dict()
@@ -467,6 +482,7 @@ def main(_):
             print(clip)
             output_path = osp.join(osp.dirname(FLAGS.output_path), clip + '.hdf5')
             clip_paths = {k: v for k, v in paths.items() if k.startswith(clip)}
+            print(clip_paths)
             output = create_dataset(clip_paths, output_path)
             (prop_tot, sq_prop_tot, a_tot, sq_a_tot, mean_a_tot, sq_mean_a_tot, cnt, snip_ret, val, adv) = output
             proprio_total += prop_tot

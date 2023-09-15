@@ -220,7 +220,7 @@ class MocapTrackingGymEnvRunHack(dm_control_wrapper.DmControlWrapper):
         self._last_time_in_clip = self._env.task._last_step / (len(self._env.task._clip_reference_features['joints'])-1)
         return obs
     
-    
+#previous MocapContinuationGym    
 class MocapContinuationGym(dm_control_wrapper.DmControlWrapper):
     """
     Wraps the MultiClipMocapTracking into a Gym env.
@@ -306,9 +306,13 @@ class MocapContinuationGym(dm_control_wrapper.DmControlWrapper):
                 obs_spaces[k] = spaces.Discrete(len(self._dataset.ids))
         return spaces.Dict(obs_spaces)
 
-    def step(self, action: np.ndarray) -> Tuple[Dict[str, np.ndarray], float, bool, Dict[str, Any]]:
+    def step(self, action: np.ndarray, terminate=False) -> Tuple[Dict[str, np.ndarray], float, bool, Dict[str, Any]]:
         obs, reward, done, info = super().step(action)
-        self._env._reset_next_step = False
+        if not terminate:
+            self._env._reset_next_step = False
+        else:
+            self._env._reset_next_step = True
+       
         if "walker/time_in_clip" in obs:
             obs["walker/time_in_clip"] = np.array([0.3])
         
