@@ -115,17 +115,23 @@ class MocapSpeedGym(dm_control_wrapper.DmControlWrapper):
                 obs_spaces[k] = spaces.Discrete(len(self._dataset.ids))
         return spaces.Dict(obs_spaces)
 
-    def step(self, action: np.ndarray) -> Tuple[Dict[str, np.ndarray], float, bool, Dict[str, Any]]:
-        obs, reward, done, info = super().step(action)
-        
+    def check_for_speed(self, time_step):
         speed = compute_speed(self._env.task, self._env.physics)
-        
         if self._target_speed < 0:
             if speed < self._speed_error_threshold:
+                obs, time_step = self.reset()
+                return speed, True, time_step  
+        elif abs(speed - self._target_speed) < self._speed_error_threshold:
                 self._env._reset_next_step = True
-        else:
-            if abs(speed - self._target_speed) < self._speed_error_threshold:
-                self._env._reset_next_step = True
+                obs, time_step = self.reset()
+                return speed, True, time_step
+        
+        self._env._reset_next_step = False
+        return speed, False, time_step
+
+    def step(self, action: np.ndarray) -> Tuple[Dict[str, np.ndarray], float, bool, Dict[str, Any]]:                   
+        obs, reward, done, info = super().step(action)
+        
                
         if "walker/time_in_clip" in obs:
             obs["walker/time_in_clip"] = np.array([0.3])
@@ -133,7 +139,6 @@ class MocapSpeedGym(dm_control_wrapper.DmControlWrapper):
         info['time_in_clip'] = obs['walker/time_in_clip'].item()
         info['start_time_in_clip'] = self._start_time_in_clip
         info['last_time_in_clip'] = self._last_time_in_clip
-        
         return obs, reward, done, info
 
     def reset(self):
