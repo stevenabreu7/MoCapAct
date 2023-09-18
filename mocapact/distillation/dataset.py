@@ -600,9 +600,8 @@ class ExpertDatasetRNN(ExpertDataset):
         # drop first and last n timesteps
         weight = weight[self.drop_first_n_timesteps:-self.drop_last_n_timesteps]
         act = act[self.drop_first_n_timesteps:-self.drop_last_n_timesteps]
-        obs = {
-            k: v[self.drop_first_n_timesteps:-self.drop_last_n_timesteps] for k, v in obs.items()
-        }
+        for k in obs.keys():
+            obs[k] = obs[k][self.drop_first_n_timesteps:-self.drop_last_n_timesteps]
 
         # limit to max_n_timesteps
         if self.max_n_timesteps is not None:
